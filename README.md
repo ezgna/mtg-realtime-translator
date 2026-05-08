@@ -5,6 +5,14 @@ OpenAI Realtime Translation API を使った、デスクトップ向けのリア
 
 リポジトリ: <https://github.com/nanameru/mtg-realtime-translator>
 
+## デモ
+
+こんな感じで動きます👇
+
+<video src="https://github.com/nanameru/mtg-realtime-translator/raw/main/docs/videos/demo.mp4" controls width="720"></video>
+
+> 上の動画が再生されない場合は [docs/videos/demo.mp4](docs/videos/demo.mp4) から直接ダウンロードしてください。
+
 ---
 
 ## 必要なもの
