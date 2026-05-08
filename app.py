@@ -34,6 +34,18 @@ AUDIO_LATENCY = "low"                      # PortAudio: ask for smallest OS buff
 MODEL = "gpt-realtime-translate"
 WS_URL = f"wss://api.openai.com/v1/realtime/translations?model={MODEL}"
 
+# Silero VAD — runs locally on the mic stream so we (a) only ship speech to
+# the server and (b) can fire an explicit commit the instant the talker stops,
+# instead of waiting for the opaque server-side VAD to notice silence.
+VAD_SAMPLE_RATE        = 16000             # silero is trained at 16k
+VAD_WINDOW_SAMPLES     = 512               # required window size at 16k (32ms)
+VAD_RESAMPLE_BLOCK_24K = 768               # 32ms @ 24k → 512 @ 16k (ratio 2/3)
+VAD_THRESHOLD          = 0.5
+VAD_MIN_SILENCE_MS     = 320               # silence run before declaring end-of-speech
+VAD_LOOKBACK_MS        = 240               # pre-roll prepended on speech start so we don't clip onsets
+VAD_LOOKBACK_CHUNKS    = VAD_LOOKBACK_MS // CHUNK_MS
+VAD_SEND_COMMIT        = True              # send session.input_audio_buffer.commit on end-of-speech
+
 LANGUAGES = [
     ("English",     "en"),
     ("日本語",       "ja"),
@@ -297,6 +309,14 @@ class TranslationWorker(QObject):
         if self.running:
             self._cmd_queue.put({"type": "set_lang", "lang": lang})
 
+    def change_input_device(self, in_dev: Optional[int]):
+        if self.running:
+            self._cmd_queue.put({"type": "set_input", "in": in_dev})
+
+    def change_output_device(self, out_dev: Optional[int]):
+        if self.running:
+            self._cmd_queue.put({"type": "set_output", "out": out_dev})
+
     def _run(self):
         try:
             asyncio.run(self._async_main())
@@ -353,6 +373,44 @@ class TranslationWorker(QObject):
             out_stream: Optional[sd.OutputStream] = None
             sender_active = threading.Event()  # gate: only emit audio when live
 
+            # ---- Silero VAD ----------------------------------------------
+            # Loaded once per session. ONNX backend keeps the runtime light;
+            # inference on a 32ms window at 16kHz is ~0.3 ms on CPU.
+            try:
+                from silero_vad import load_silero_vad, VADIterator
+                import scipy.signal as scisig
+                vad_model = load_silero_vad(onnx=True)
+                vad_iter = VADIterator(
+                    vad_model,
+                    threshold=VAD_THRESHOLD,
+                    sampling_rate=VAD_SAMPLE_RATE,
+                    min_silence_duration_ms=VAD_MIN_SILENCE_MS,
+                    speech_pad_ms=0,  # we manage pre-roll ourselves via lookback
+                )
+            except Exception as e:
+                self.error_occurred.emit(f"Silero VAD load failed: {e}")
+                return
+
+            vad_buf_24k = np.zeros(0, dtype=np.float32)
+            vad_lookback: collections.deque = collections.deque(maxlen=VAD_LOOKBACK_CHUNKS)
+            vad_state = {"in_speech": False}
+            mic_emit_count = {"n": 0}
+
+            def vad_reset():
+                nonlocal vad_buf_24k
+                vad_iter.reset_states()
+                vad_buf_24k = np.zeros(0, dtype=np.float32)
+                vad_lookback.clear()
+                vad_state["in_speech"] = False
+
+            def schedule_ws(payload: dict):
+                try:
+                    asyncio.run_coroutine_threadsafe(
+                        ws.send(json.dumps(payload)), loop,
+                    )
+                except Exception:
+                    pass
+
             def out_cb(outdata, frames, time_info, status):
                 needed = frames
                 produced = 0
@@ -370,14 +428,54 @@ class TranslationWorker(QObject):
                     outdata[produced:, 0] = 0
 
             def mic_cb(indata, frames, time_info, status):
+                nonlocal vad_buf_24k
                 if not sender_active.is_set():
                     return
-                pcm16 = (indata[:, 0] * 32767).astype(np.int16).tobytes()
-                level = float(np.abs(indata).mean())
-                try:
-                    loop.call_soon_threadsafe(audio_q.put_nowait, (pcm16, level))
-                except RuntimeError:
-                    pass
+                chunk = indata[:, 0].astype(np.float32, copy=False)
+                pcm16 = (chunk * 32767).astype(np.int16).tobytes()
+                level = float(np.abs(chunk).mean())
+
+                # UI level update — throttled to ~60ms so the bar still moves
+                # even when we're gating audio off.
+                mic_emit_count["n"] += 1
+                if mic_emit_count["n"] % 3 == 0:
+                    self.mic_level.emit(level)
+
+                # Run Silero VAD on resampled 16kHz windows. Accumulate raw
+                # 24kHz samples and pop 32ms blocks (768 → 512 samples).
+                vad_buf_24k = np.concatenate([vad_buf_24k, chunk])
+                while len(vad_buf_24k) >= VAD_RESAMPLE_BLOCK_24K:
+                    block = vad_buf_24k[:VAD_RESAMPLE_BLOCK_24K]
+                    vad_buf_24k = vad_buf_24k[VAD_RESAMPLE_BLOCK_24K:]
+                    block_16k = scisig.resample_poly(block, 2, 3).astype(np.float32)
+                    if len(block_16k) < VAD_WINDOW_SAMPLES:
+                        continue
+                    evt = vad_iter(block_16k[:VAD_WINDOW_SAMPLES], return_seconds=False)
+                    if not evt:
+                        continue
+                    if "start" in evt and not vad_state["in_speech"]:
+                        vad_state["in_speech"] = True
+                        # Flush pre-roll so the model hears the first phoneme.
+                        while vad_lookback:
+                            pre_pcm, pre_level = vad_lookback.popleft()
+                            try:
+                                loop.call_soon_threadsafe(
+                                    audio_q.put_nowait, (pre_pcm, pre_level),
+                                )
+                            except RuntimeError:
+                                pass
+                    elif "end" in evt and vad_state["in_speech"]:
+                        vad_state["in_speech"] = False
+                        if VAD_SEND_COMMIT:
+                            schedule_ws({"type": "session.input_audio_buffer.commit"})
+
+                if vad_state["in_speech"]:
+                    try:
+                        loop.call_soon_threadsafe(audio_q.put_nowait, (pcm16, level))
+                    except RuntimeError:
+                        pass
+                else:
+                    vad_lookback.append((pcm16, level))
 
             def open_streams(in_dev: Optional[int], out_dev: Optional[int]):
                 nonlocal in_stream, out_stream
@@ -385,6 +483,7 @@ class TranslationWorker(QObject):
                     return
                 with playback_lock:
                     playback_buf.clear()
+                vad_reset()
                 out_stream = sd.OutputStream(
                     samplerate=SAMPLE_RATE, channels=CHANNELS,
                     dtype="int16", device=out_dev,
@@ -404,6 +503,12 @@ class TranslationWorker(QObject):
             def close_streams():
                 nonlocal in_stream, out_stream
                 sender_active.clear()
+                # If we cut while still mid-utterance, ask the server to
+                # commit whatever's already buffered so the user gets the
+                # tail translation instead of it disappearing on stop.
+                if vad_state["in_speech"] and VAD_SEND_COMMIT:
+                    schedule_ws({"type": "session.input_audio_buffer.commit"})
+                vad_reset()
                 if in_stream is not None:
                     try: in_stream.stop(); in_stream.close()
                     except Exception: pass
@@ -418,10 +523,9 @@ class TranslationWorker(QObject):
             stop_flag = self._stop_event
 
             async def sender():
-                count = 0
                 while not stop_flag.is_set():
                     try:
-                        pcm16, level = await asyncio.wait_for(audio_q.get(), timeout=0.1)
+                        pcm16, _level = await asyncio.wait_for(audio_q.get(), timeout=0.1)
                     except asyncio.TimeoutError:
                         continue
                     if not sender_active.is_set():
@@ -430,9 +534,6 @@ class TranslationWorker(QObject):
                         "type": "session.input_audio_buffer.append",
                         "audio": base64.b64encode(pcm16).decode("ascii"),
                     }))
-                    count += 1
-                    if count % 3 == 0:
-                        self.mic_level.emit(level)
 
             async def receiver():
                 while not stop_flag.is_set():
@@ -480,6 +581,9 @@ class TranslationWorker(QObject):
                         err = msg.get("error", {})
                         self.error_occurred.emit(err.get("message", json.dumps(err)))
 
+            # remember current devices so set_input / set_output can rebuild
+            current_dev = {"in": None, "out": None}
+
             async def cmd_processor():
                 while not stop_flag.is_set():
                     try:
@@ -491,11 +595,25 @@ class TranslationWorker(QObject):
                     if t == "stop":
                         break
                     elif t == "start_audio":
+                        current_dev["in"] = cmd["in"]
+                        current_dev["out"] = cmd["out"]
                         open_streams(cmd["in"], cmd["out"])
                         self.status_changed.emit("live")
                     elif t == "stop_audio":
                         close_streams()
                         self.status_changed.emit("ready")
+                    elif t == "set_input":
+                        current_dev["in"] = cmd["in"]
+                        if in_stream is not None:  # live → swap
+                            close_streams()
+                            open_streams(current_dev["in"], current_dev["out"])
+                            self.status_changed.emit("live")
+                    elif t == "set_output":
+                        current_dev["out"] = cmd["out"]
+                        if out_stream is not None:  # live → swap
+                            close_streams()
+                            open_streams(current_dev["in"], current_dev["out"])
+                            self.status_changed.emit("live")
                     elif t == "set_lang":
                         await ws.send(json.dumps({
                             "type": "session.update",
@@ -590,6 +708,7 @@ class MainWindow(QMainWindow):
         self.input_combo.addItem("System default", None)
         for idx, name in list_input_devices():
             self.input_combo.addItem(name, idx)
+        self.input_combo.currentIndexChanged.connect(self.on_input_changed)
         mic_col.addWidget(self.input_combo)
         controls.addLayout(mic_col, 1)
 
@@ -601,6 +720,7 @@ class MainWindow(QMainWindow):
         self.output_combo.addItem("System default", None)
         for idx, name in list_output_devices():
             self.output_combo.addItem(name, idx)
+        self.output_combo.currentIndexChanged.connect(self.on_output_changed)
         out_col.addWidget(self.output_combo)
         controls.addLayout(out_col, 1)
 
@@ -652,9 +772,7 @@ class MainWindow(QMainWindow):
         out_dev = self.output_combo.currentData()
         self.start_btn.setEnabled(False)
         self.stop_btn.setEnabled(True)
-        self.input_combo.setEnabled(False)
-        self.output_combo.setEnabled(False)
-        # WS is already pre-warmed; this only flips on the audio streams.
+        # Devices stay live-switchable — no need to disable the combos.
         self.worker.start_audio(in_dev, out_dev)
 
     @Slot()
@@ -666,6 +784,14 @@ class MainWindow(QMainWindow):
     def on_lang_changed(self, _idx: int):
         lang = self.lang_combo.currentData()
         self.worker.change_language(lang)
+
+    @Slot(int)
+    def on_input_changed(self, _idx: int):
+        self.worker.change_input_device(self.input_combo.currentData())
+
+    @Slot(int)
+    def on_output_changed(self, _idx: int):
+        self.worker.change_output_device(self.output_combo.currentData())
 
     @Slot(str)
     def on_status(self, status: str):
@@ -680,15 +806,11 @@ class MainWindow(QMainWindow):
         if status == "ready":
             self.start_btn.setEnabled(True)
             self.stop_btn.setEnabled(False)
-            self.input_combo.setEnabled(True)
-            self.output_combo.setEnabled(True)
             self.level_bar.setValue(0)
         elif status == "disconnected":
             # WS dropped — relaunch in the background so the next Start works.
             self.start_btn.setEnabled(True)
             self.stop_btn.setEnabled(False)
-            self.input_combo.setEnabled(True)
-            self.output_combo.setEnabled(True)
             self.level_bar.setValue(0)
             self.worker.preconnect(self.lang_combo.currentData())
 
