@@ -1,9 +1,9 @@
-# honnyaku-konnyaku
+# mtg-realtime-translator
 
 OpenAI Realtime Translation API を使った、デスクトップ向けのリアルタイム翻訳アプリ（PySide6 製）。
 マイクから入った音声をその場で翻訳し、テキストと音声で返します。Silero VAD をローカルで走らせて、話し終わった瞬間にサーバへコミットさせるので、レイテンシは数百 ms 台。
 
-リポジトリ: <https://github.com/nanameru/honnyaku-konnyaku>
+リポジトリ: <https://github.com/nanameru/mtg-realtime-translator>
 
 ---
 
@@ -17,8 +17,8 @@ OpenAI Realtime Translation API を使った、デスクトップ向けのリア
 ## セットアップ
 
 ```bash
-git clone https://github.com/nanameru/honnyaku-konnyaku.git
-cd honnyaku-konnyaku
+git clone https://github.com/nanameru/mtg-realtime-translator.git
+cd mtg-realtime-translator
 
 python3 -m venv .venv
 source .venv/bin/activate          # Windows: .venv\Scripts\activate
@@ -108,4 +108,4 @@ Zoom の例。マイクの「∧」アイコンから出てくるメニューで
 
 ## ライセンス
 
-未設定。必要なら追記してください。
+[MIT License](LICENSE) © 2026 nanameru
