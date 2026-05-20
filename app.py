@@ -54,18 +54,16 @@ LANGUAGES = [
     ("English",     "en"),
     ("日本語",       "ja"),
     ("Español",     "es"),
+    ("Português",   "pt"),
     ("Français",    "fr"),
+    ("Italiano",    "it"),
     ("Deutsch",     "de"),
+    ("Русский",     "ru"),
     ("中文",         "zh"),
     ("한국어",        "ko"),
-    ("Italiano",    "it"),
-    ("Português",   "pt"),
-    ("Русский",     "ru"),
-    ("العربية",      "ar"),
     ("हिन्दी",       "hi"),
-    ("ไทย",          "th"),
+    ("Bahasa Indonesia", "id"),
     ("Tiếng Việt",  "vi"),
-    ("Türkçe",      "tr"),
 ]
 
 # OpenAI-inspired palette
@@ -688,6 +686,7 @@ class MainWindow(QMainWindow):
         self.worker.mic_level.connect(self.on_mic_level)
         self.worker.error_occurred.connect(self.on_error)
         self.worker.language_confirmed.connect(self.on_lang_confirmed)
+        self.audio_live = False
 
         self._build_ui()
         # Pre-warm the WebSocket the moment the window appears so the first
@@ -823,33 +822,35 @@ class MainWindow(QMainWindow):
         self.clear_btn.clicked.connect(lambda: self.transcript.clear())
         footer.addWidget(self.clear_btn)
 
-        self.stop_btn = QPushButton("Stop")
-        self.stop_btn.setObjectName("stop")
-        self.stop_btn.clicked.connect(self.on_stop)
-        self.stop_btn.setEnabled(False)
-        footer.addWidget(self.stop_btn)
-
         self.start_btn = QPushButton("Start")
         self.start_btn.setObjectName("primary")
-        self.start_btn.clicked.connect(self.on_start)
+        self.start_btn.clicked.connect(self.on_start_stop)
         footer.addWidget(self.start_btn)
 
         root.addLayout(footer)
 
     # ── handlers ──────────────────────────────────────────────
     @Slot()
-    def on_start(self):
+    def on_start_stop(self):
+        if self.audio_live:
+            self._set_audio_button("Stopping...", False, "stop")
+            self.worker.stop_audio()
+            return
+
         in_dev = self.input_combo.currentData()
         out_dev = self.output_combo.currentData()
-        self.start_btn.setEnabled(False)
-        self.stop_btn.setEnabled(True)
-        # Devices stay live-switchable — no need to disable the combos.
+        self._set_audio_button("Starting...", False, "primary")
+        # デバイスはライブ中も切り替え可能なので、コンボボックスは無効化しない。
         self.worker.start_audio(in_dev, out_dev)
 
-    @Slot()
-    def on_stop(self):
-        self.worker.stop_audio()
-        self.stop_btn.setEnabled(False)
+    def _set_audio_button(self, text: str, enabled: bool, style_id: str):
+        self.start_btn.setText(text)
+        self.start_btn.setEnabled(enabled)
+        if self.start_btn.objectName() != style_id:
+            self.start_btn.setObjectName(style_id)
+            self.start_btn.style().unpolish(self.start_btn)
+            self.start_btn.style().polish(self.start_btn)
+            self.start_btn.update()
 
     @Slot(int)
     def on_lang_changed(self, _idx: int):
@@ -920,14 +921,17 @@ class MainWindow(QMainWindow):
         }.get(status, (COL_TEXT_DIM, status))
         self.status_dot.set_color(color)
         self.status_label.setText(text)
-        if status == "ready":
-            self.start_btn.setEnabled(True)
-            self.stop_btn.setEnabled(False)
+        if status == "live":
+            self.audio_live = True
+            self._set_audio_button("Stop", True, "stop")
+        elif status == "ready":
+            self.audio_live = False
+            self._set_audio_button("Start", True, "primary")
             self.level_bar.setValue(0)
         elif status == "disconnected":
-            # WS dropped — relaunch in the background so the next Start works.
-            self.start_btn.setEnabled(True)
-            self.stop_btn.setEnabled(False)
+            # WS が切れたら、次の Start に備えてバックグラウンドで再接続する。
+            self.audio_live = False
+            self._set_audio_button("Start", True, "primary")
             self.level_bar.setValue(0)
             self.worker.preconnect(self.lang_combo.currentData())
 
