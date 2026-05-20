@@ -110,6 +110,11 @@ QLabel#status {{
     font-size: 12px;
     font-weight: 500;
 }}
+QLabel#note {{
+    color: {COL_TEXT_DIM};
+    font-size: 12px;
+    line-height: 1.4;
+}}
 
 QFrame#divider {{
     background: {COL_BORDER};
@@ -199,6 +204,25 @@ QPushButton#stop:hover {{
     background: {COL_SURFACE};
 }}
 
+QPushButton#preset {{
+    border-radius: 10px;
+    padding: 9px 14px;
+    text-align: left;
+}}
+QPushButton#preset:focus {{
+    border-color: {COL_ACCENT};
+}}
+
+QPushButton#textOnly {{
+    border-radius: 18px;
+    padding: 8px 14px;
+}}
+QPushButton#textOnly:checked {{
+    background: {COL_ACCENT_DIM};
+    border-color: {COL_ACCENT};
+    color: #ffffff;
+}}
+
 QTextEdit {{
     background: {COL_SURFACE};
     color: {COL_TEXT};
@@ -277,6 +301,7 @@ class TranslationWorker(QObject):
         self._cmd_queue: queue.Queue = queue.Queue()
         self._thread: Optional[threading.Thread] = None
         self.target_lang = "en"
+        self.audio_muted = False
 
     @property
     def running(self) -> bool:
@@ -320,6 +345,11 @@ class TranslationWorker(QObject):
     def change_output_device(self, out_dev: Optional[int]):
         if self.running:
             self._cmd_queue.put({"type": "set_output", "out": out_dev})
+
+    def set_audio_muted(self, muted: bool):
+        self.audio_muted = muted
+        if self.running:
+            self._cmd_queue.put({"type": "set_audio_muted", "muted": muted})
 
     def _run(self):
         try:
@@ -371,6 +401,7 @@ class TranslationWorker(QObject):
             audio_q: asyncio.Queue = asyncio.Queue()
             playback_buf = collections.deque()
             playback_lock = threading.Lock()
+            audio_muted = {"on": self.audio_muted}
 
             # streams are opened/closed on demand via cmd_processor
             in_stream: Optional[sd.InputStream] = None
@@ -557,7 +588,7 @@ class TranslationWorker(QObject):
                         "session.output_audio.delta",
                     ):
                         audio_b64 = msg.get("delta") or msg.get("audio") or ""
-                        if audio_b64:
+                        if audio_b64 and not audio_muted["on"]:
                             pcm = np.frombuffer(base64.b64decode(audio_b64), dtype=np.int16)
                             with playback_lock:
                                 playback_buf.append(pcm)
@@ -615,6 +646,11 @@ class TranslationWorker(QObject):
                             close_streams()
                             open_streams(current_dev["in"], current_dev["out"])
                             self.status_changed.emit("live")
+                    elif t == "set_audio_muted":
+                        audio_muted["on"] = bool(cmd["muted"])
+                        if audio_muted["on"]:
+                            with playback_lock:
+                                playback_buf.clear()
                     elif t == "set_lang":
                         await ws.send(json.dumps({
                             "type": "session.update",
@@ -727,6 +763,33 @@ class MainWindow(QMainWindow):
 
         root.addLayout(controls)
 
+        # ── Teamsプリセット ──────────────────────────────────
+        preset_col = QVBoxLayout(); preset_col.setSpacing(8)
+        cap_preset = QLabel("Teamsプリセット"); cap_preset.setObjectName("caption")
+        preset_col.addWidget(cap_preset)
+
+        preset_row = QHBoxLayout(); preset_row.setSpacing(10)
+        self.listen_preset_btn = QPushButton("相手の英語 → 日本語")
+        self.listen_preset_btn.setObjectName("preset")
+        self.listen_preset_btn.setToolTip("Teams の相手音声を BlackHole 経由で受け取り、日本語に翻訳して自分の出力へ流します。")
+        self.listen_preset_btn.clicked.connect(self.apply_listen_preset)
+        preset_row.addWidget(self.listen_preset_btn, 1)
+
+        self.speak_preset_btn = QPushButton("自分の日本語 → 英語")
+        self.speak_preset_btn.setObjectName("preset")
+        self.speak_preset_btn.setToolTip("自分のマイク音声を英語に翻訳し、BlackHole 経由で Teams のマイクへ流します。")
+        self.speak_preset_btn.clicked.connect(self.apply_speak_preset)
+        preset_row.addWidget(self.speak_preset_btn, 1)
+        preset_col.addLayout(preset_row)
+
+        self.zoom_note = QLabel(
+            "Teams設定メモ: 用途プリセットを押すと、Teams 側で選ぶデバイスをここに表示します。"
+        )
+        self.zoom_note.setObjectName("note")
+        self.zoom_note.setWordWrap(True)
+        preset_col.addWidget(self.zoom_note)
+        root.addLayout(preset_col)
+
         # ── transcript ─────────────────────────────────────────
         cap_trans = QLabel("Translation"); cap_trans.setObjectName("caption")
         root.addWidget(cap_trans)
@@ -748,6 +811,13 @@ class MainWindow(QMainWindow):
         self.level_bar.setTextVisible(False)
         level_box.addWidget(self.level_bar)
         footer.addLayout(level_box, 1)
+
+        self.text_only_btn = QPushButton("Text only")
+        self.text_only_btn.setObjectName("textOnly")
+        self.text_only_btn.setCheckable(True)
+        self.text_only_btn.setToolTip("音声を再生せず、Translation のテキストだけ表示します。")
+        self.text_only_btn.toggled.connect(self.on_text_only_toggled)
+        footer.addWidget(self.text_only_btn)
 
         self.clear_btn = QPushButton("Clear")
         self.clear_btn.clicked.connect(lambda: self.transcript.clear())
@@ -793,6 +863,52 @@ class MainWindow(QMainWindow):
     @Slot(int)
     def on_output_changed(self, _idx: int):
         self.worker.change_output_device(self.output_combo.currentData())
+
+    @Slot(bool)
+    def on_text_only_toggled(self, checked: bool):
+        self.worker.set_audio_muted(checked)
+
+    @Slot()
+    def apply_listen_preset(self):
+        self._select_language("ja")
+        blackhole_found = self._select_blackhole_device(self.input_combo)
+        self._select_system_default(self.output_combo)
+        note = (
+            "Teams設定メモ: 相手の英語を日本語にして自分が聞く。"
+            " Teams は Speaker=BlackHole 2ch / Microphone=普段のマイク。"
+        )
+        if not blackhole_found:
+            note = "BlackHole 2ch が Translator の Input に見つかりません。Audio MIDI 設定と再起動状態を確認してください。 " + note
+        self.zoom_note.setText(note)
+
+    @Slot()
+    def apply_speak_preset(self):
+        self._select_language("en")
+        self._select_system_default(self.input_combo)
+        blackhole_found = self._select_blackhole_device(self.output_combo)
+        note = (
+            "Teams設定メモ: 自分の日本語を英語にして相手にだけ届ける。"
+            " Teams は Speaker=普段のイヤホン・スピーカー / Microphone=BlackHole 2ch。"
+        )
+        if not blackhole_found:
+            note = "BlackHole 2ch が Translator の Output に見つかりません。Audio MIDI 設定と再起動状態を確認してください。 " + note
+        self.zoom_note.setText(note)
+
+    def _select_language(self, code: str):
+        for i in range(self.lang_combo.count()):
+            if self.lang_combo.itemData(i) == code:
+                self.lang_combo.setCurrentIndex(i)
+                return
+
+    def _select_system_default(self, combo: QComboBox):
+        combo.setCurrentIndex(0)
+
+    def _select_blackhole_device(self, combo: QComboBox) -> bool:
+        for i in range(combo.count()):
+            if "blackhole" in combo.itemText(i).lower():
+                combo.setCurrentIndex(i)
+                return True
+        return False
 
     @Slot(str)
     def on_status(self, status: str):
