@@ -1,0 +1,271 @@
+:root {
+  color-scheme: dark;
+  --bg: #111315;
+  --panel: #1b1d20;
+  --panel-2: #22262a;
+  --line: #343a40;
+  --text: #f1f3f4;
+  --muted: #a8b0b8;
+  --green: #36c58a;
+  --amber: #f2a93b;
+  --red: #ff625c;
+  --blue: #70a7ff;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background: var(--bg);
+  color: var(--text);
+  font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+button,
+select,
+input {
+  font: inherit;
+}
+
+.app-shell {
+  min-height: 100vh;
+  display: grid;
+  grid-template-rows: auto auto auto 1fr;
+}
+
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 22px 28px;
+  border-bottom: 1px solid var(--line);
+}
+
+h1 {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: 0;
+}
+
+.topbar p {
+  margin: 3px 0 0;
+  color: var(--muted);
+}
+
+.status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 116px;
+  justify-content: center;
+  padding: 8px 12px;
+  border: 1px solid var(--line);
+  background: var(--panel);
+}
+
+.status-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--muted);
+}
+
+.status-pill[data-mode="live"] .status-dot {
+  background: var(--green);
+}
+
+.status-pill[data-mode="working"] .status-dot {
+  background: var(--amber);
+}
+
+.status-pill[data-mode="error"] .status-dot {
+  background: var(--red);
+}
+
+.control-band {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) minmax(220px, 1.2fr) minmax(220px, 1.2fr) auto auto;
+  gap: 14px;
+  align-items: end;
+  padding: 22px 28px;
+  border-bottom: 1px solid var(--line);
+  background: var(--panel);
+}
+
+label span,
+.meter-band span,
+article header {
+  display: block;
+  margin-bottom: 7px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+select,
+button {
+  min-height: 40px;
+  border: 1px solid var(--line);
+  background: var(--panel-2);
+  color: var(--text);
+  padding: 0 12px;
+}
+
+select {
+  width: 100%;
+}
+
+button {
+  min-width: 86px;
+  cursor: pointer;
+}
+
+button:disabled,
+select:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+
+button.primary {
+  border-color: transparent;
+  background: var(--green);
+  color: #08100d;
+  font-weight: 700;
+}
+
+button.primary[data-phase="live"] {
+  background: var(--red);
+  color: #fff;
+}
+
+.switches {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 40px;
+}
+
+.check {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.check input {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--green);
+}
+
+.actions {
+  display: flex;
+  gap: 8px;
+}
+
+.meter-band {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 16px 28px;
+  border-bottom: 1px solid var(--line);
+}
+
+.meter-band > div {
+  width: min(420px, 60vw);
+}
+
+.meter {
+  width: 100%;
+  height: 8px;
+  background: var(--panel-2);
+  overflow: hidden;
+}
+
+#levelFill {
+  width: 0%;
+  height: 100%;
+  background: var(--amber);
+  transition: width 70ms linear;
+}
+
+.transcripts {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  min-height: 0;
+}
+
+article {
+  display: grid;
+  grid-template-rows: auto 1fr;
+  min-height: 0;
+  padding: 22px 28px;
+}
+
+article + article {
+  border-left: 1px solid var(--line);
+}
+
+.transcript {
+  min-height: 320px;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  padding: 18px;
+  border: 1px solid var(--line);
+  background: #151719;
+  font-size: 18px;
+}
+
+.translation {
+  font-size: 22px;
+}
+
+@media (max-width: 980px) {
+  .control-band {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .switches,
+  .actions {
+    grid-column: span 2;
+  }
+
+  .transcripts {
+    grid-template-columns: 1fr;
+  }
+
+  article + article {
+    border-left: 0;
+    border-top: 1px solid var(--line);
+  }
+}
+
+@media (max-width: 620px) {
+  .topbar,
+  .meter-band {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .control-band {
+    grid-template-columns: 1fr;
+  }
+
+  .switches,
+  .actions {
+    grid-column: auto;
+  }
+
+  .actions {
+    flex-wrap: wrap;
+  }
+}

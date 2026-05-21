@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Realtime Translator</title>
+    <link rel="stylesheet" href="/style.css" />
+  </head>
+  <body>
+    <main class="app-shell">
+      <header class="topbar">
+        <div>
+          <h1>Realtime Translator</h1>
+          <p id="connectionLabel">Disconnected</p>
+        </div>
+        <div class="status-pill" id="statusPill">
+          <span class="status-dot"></span>
+          <span id="statusText">Idle</span>
+        </div>
+      </header>
+
+      <section class="control-band" aria-label="Controls">
+        <label>
+          <span>Output language</span>
+          <select id="languageSelect"></select>
+        </label>
+        <label>
+          <span>Microphone</span>
+          <select id="inputSelect">
+            <option value="">System default</option>
+          </select>
+        </label>
+        <label>
+          <span>Speaker</span>
+          <select id="outputSelect">
+            <option value="">System default</option>
+          </select>
+        </label>
+        <div class="switches">
+          <label class="check"><input id="echoCancel" type="checkbox" checked /> Echo</label>
+          <label class="check"><input id="noiseSuppress" type="checkbox" checked /> Noise</label>
+          <label class="check"><input id="autoGain" type="checkbox" checked /> Gain</label>
+        </div>
+        <div class="actions">
+          <button id="refreshButton" type="button">Refresh</button>
+          <button id="sessionButton" type="button" class="primary" data-phase="idle">Start</button>
+        </div>
+      </section>
+
+      <section class="meter-band" aria-label="Audio meter">
+        <div>
+          <span>MIC LEVEL</span>
+          <div class="meter"><div id="levelFill"></div></div>
+        </div>
+        <button id="clearButton" type="button">Clear</button>
+      </section>
+
+      <section class="transcripts" aria-label="Transcripts">
+        <article>
+          <header>Source</header>
+          <div id="sourceTranscript" class="transcript"></div>
+        </article>
+        <article>
+          <header>Translation</header>
+          <div id="translationTranscript" class="transcript translation"></div>
+        </article>
+      </section>
+
+      <audio id="remoteAudio" autoplay></audio>
+    </main>
+    <script src="/app.js" type="module"></script>
+  </body>
+</html>
