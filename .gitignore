@@ -3,3 +3,7 @@ __pycache__/
 *.pyc
 .env
 .claude/settings.local.json
+.build/
+.swiftpm/
+xcuserdata/
+DerivedData/

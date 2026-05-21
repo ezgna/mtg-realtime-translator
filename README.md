@@ -1,7 +1,7 @@
 # mtg-realtime-translator
 
-OpenAI Realtime Translation API を使った、デスクトップ向けのリアルタイム翻訳アプリ（PySide6 製）。
-マイクから入った音声をその場で翻訳し、テキストと音声で返します。Silero VAD をローカルで走らせて、話し終わった瞬間にサーバへコミットさせるので、レイテンシは数百 ms 台。
+OpenAI Realtime Translation API を使った、デスクトップ向けのリアルタイム翻訳アプリ。
+マイクから入った音声をその場で翻訳し、テキストと音声で返します。Swift 版では FluidAudio の Streaming VAD（Silero VAD v6 / CoreML）で発話区間を検出し、話し終わった瞬間にサーバへコミットさせます。
 
 リポジトリ: <https://github.com/nanameru/mtg-realtime-translator>
 
@@ -18,38 +18,43 @@ OpenAI Realtime Translation API を使った、デスクトップ向けのリア
 ## 必要なもの
 
 - macOS / Windows / Linux （動作確認は macOS）
-- Python 3.10+
+- Swift 5.10+ / macOS 14+（Swift ネイティブ版）
 - OpenAI API キー（Realtime API が使えるもの）
 - Zoom / Google Meet で使う場合は **仮想オーディオデバイス**（macOS は [BlackHole](https://existential.audio/blackhole/) を推奨）
 
 ## セットアップ
 
+Swift ネイティブ版は repo 直下の `.env` を使いません。API キーは repo 外に置きます。
+
 ```bash
 git clone https://github.com/nanameru/mtg-realtime-translator.git
 cd mtg-realtime-translator
 
-python3 -m venv .venv
-source .venv/bin/activate          # Windows: .venv\Scripts\activate
-pip install -r requirements.txt
-
-cp .env.example .env
-# .env を開いて OPENAI_API_KEY=sk-... を入れる
+mkdir -p ~/.keys/openai/mtg-realtime-translator
+printf 'OPENAI_API_KEY=sk-...\n' > ~/.keys/openai/mtg-realtime-translator/.env
+chmod 600 ~/.keys/openai/mtg-realtime-translator/.env
 ```
 
 ## 起動
 
 ```bash
-python app.py
+cd macos/RealtimeTranslator
+swift run RealtimeTranslator
 ```
 
 ウィンドウが開いたら：
 
 1. **Output language** — 翻訳先の言語を選ぶ
-2. **Input** — マイク（自分の声をそのまま訳すならマイク、相手の声を訳すなら後述の仮想デバイス）
-3. **Output** — 再生先のスピーカー
-4. **Start** を押す → 話す → 翻訳テキストが流れてくる
+2. **Mode** — 既定入出力で Apple AEC を使うなら `Presentation`、iPhone など任意デバイスで発表するなら `Presentation + Devices`、Teams / BlackHole 連携なら `Routing`
+3. **Input** — マイク（相手の声を訳すなら後述の仮想デバイス）
+4. **Output** — 再生先のスピーカー
+5. **Start** を押す → 話す → 翻訳テキストと音声が流れてくる
 
-`.env` を編集する代わりに、シェルで `OPENAI_API_KEY` をエクスポートしてもOK。
+Swift 版は Keychain を使いません。`OPENAI_API_KEY` は常に `~/.keys/openai/mtg-realtime-translator/.env` から読みます。
+
+### Python 版について
+
+Python 版の `app.py` / `main.py` は参考実装として残しています。新しい macOS 版の開発・起動は `macos/RealtimeTranslator` を使います。
 
 ---
 
@@ -93,7 +98,7 @@ Zoom の例。マイクの「∧」アイコンから出てくるメニューで
 ### 本アプリ側で入出力を切り替える画面
 
 `Input` / `Output` のドロップダウンから、同じ `BlackHole 2ch` を選びます（用途 A なら Input、B なら Output）。
-**Start を押した後でも切り替えられます** — デバイスを変えると裏でストリームを張り直すだけで、セッションは継続します。
+**Start を押した後でも切り替えられます** — Swift 版ではデバイスを変えると音声ストリームと Realtime セッションを張り直します。
 
 ![Realtime Translator の Output で BlackHole 2ch を選択](docs/images/app-output-blackhole.png)
 
@@ -109,10 +114,13 @@ Zoom の例。マイクの「∧」アイコンから出てくるメニューで
 
 - WebSocket で `wss://api.openai.com/v1/realtime/translations?model=gpt-realtime-translate` に接続
 - マイク音声を 24kHz / 20ms チャンクで送信
-- ローカルの Silero VAD（ONNX）で発話の開始／終了を検出 → 終了時に短い無音を流してサーバ VAD のコミットを誘発
-- 起動と同時に WS をプリウォーム（Start を押した瞬間にハンドシェイクが終わっている状態）
+- Swift 版は FluidAudio の Streaming VAD（Silero VAD v6 / CoreML）で発話の開始／終了を検出
+- Presentation Mode では Apple Voice Processing I/O と再生中ミュートで翻訳音声の自己再入力を抑制
+- Presentation Mode では Apple Voice Processing I/O を必須にし、起動できない場合は通常音声エンジンへ自動フォールバックしません
+- Presentation + Devices Mode では任意デバイスを選べます。Apple Voice Processing I/O は使わず、再生中ミュートで自己再入力を抑制
+- 発話終了時に短い無音を流してサーバ VAD のコミットを誘発
 
-詳しいパラメータは [`app.py`](app.py) 冒頭の定数を参照。
+詳しいパラメータは Swift 版の `macos/RealtimeTranslator/Sources/RealtimeTranslatorCore` を参照。
 
 ## ライセンス
 
