@@ -33,6 +33,7 @@ const els = {
   noise: document.querySelector("#noiseSuppress"),
   gain: document.querySelector("#autoGain"),
   refresh: document.querySelector("#refreshButton"),
+  teamsSelfPreset: document.querySelector("#teamsSelfPresetButton"),
   session: document.querySelector("#sessionButton"),
   clear: document.querySelector("#clearButton"),
   statusText: document.querySelector("#statusText"),
@@ -50,6 +51,7 @@ function setSessionControlsEnabled(enabled) {
   els.echo.disabled = !enabled;
   els.noise.disabled = !enabled;
   els.gain.disabled = !enabled;
+  els.teamsSelfPreset.disabled = !enabled;
 }
 
 for (const [id, label] of LANGUAGES) {
@@ -107,6 +109,35 @@ function extractClientSecret(payload) {
   );
 }
 
+function findDeviceOption(select, pattern) {
+  return [...select.options].find((option) => pattern.test(option.textContent || ""));
+}
+
+function selectPreferredInput() {
+  const selected = els.input.selectedOptions[0];
+  if (selected?.value && !/blackhole/i.test(selected.textContent || "")) {
+    return;
+  }
+
+  const realMic = [...els.input.options].find((option) => {
+    const label = option.textContent || "";
+    return option.value && label && !/blackhole/i.test(label);
+  });
+  els.input.value = realMic?.value || "";
+}
+
+async function unlockDeviceLabels() {
+  const devices = await navigator.mediaDevices.enumerateDevices();
+  if (devices.some((device) => device.label)) {
+    return;
+  }
+
+  const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  for (const track of stream.getTracks()) {
+    track.stop();
+  }
+}
+
 async function refreshDevices() {
   if (!navigator.mediaDevices?.enumerateDevices) {
     return;
@@ -135,6 +166,49 @@ async function refreshDevices() {
   }
 
   els.output.disabled = typeof els.remoteAudio.setSinkId !== "function";
+}
+
+async function applyTeamsSelfPreset() {
+  if (state.pc) {
+    return;
+  }
+
+  setStatus("Preparing", "working");
+  els.connection.textContent = "Applying Teams preset";
+  els.teamsSelfPreset.disabled = true;
+
+  try {
+    els.language.value = "en";
+    els.echo.checked = true;
+    els.noise.checked = true;
+    els.gain.checked = true;
+
+    await unlockDeviceLabels();
+    await refreshDevices();
+    selectPreferredInput();
+
+    const blackHole =
+      findDeviceOption(els.output, /blackhole.*2ch|2ch.*blackhole/i) ||
+      findDeviceOption(els.output, /blackhole/i);
+    if (!blackHole) {
+      throw new Error("BlackHole の出力デバイスが見つかりません");
+    }
+    if (typeof els.remoteAudio.setSinkId !== "function") {
+      throw new Error("このブラウザではスピーカー出力先を切り替えられません");
+    }
+
+    els.output.value = blackHole.value;
+    await els.remoteAudio.setSinkId(blackHole.value);
+
+    setStatus("Ready", "idle");
+    els.connection.textContent = "Teams preset ready";
+  } catch (error) {
+    setStatus("Setup needed", "error");
+    els.connection.textContent = "Teams preset needs setup";
+    appendText(els.translation, `\n[Setup] ${error.message}\n`);
+  } finally {
+    els.teamsSelfPreset.disabled = false;
+  }
 }
 
 function buildAudioConstraints() {
@@ -395,6 +469,7 @@ els.session.addEventListener("click", () => {
   start();
 });
 els.refresh.addEventListener("click", refreshDevices);
+els.teamsSelfPreset.addEventListener("click", applyTeamsSelfPreset);
 els.clear.addEventListener("click", () => {
   els.source.textContent = "";
   els.translation.textContent = "";

@@ -19,7 +19,8 @@ ROOT = Path(__file__).resolve().parent
 STATIC_DIR = ROOT / "static"
 ENV_PATH = Path.home() / ".keys/openai/mtg-realtime-translator/.env"
 OPENAI_CLIENT_SECRETS_URL = "https://api.openai.com/v1/realtime/translations/client_secrets"
-MODEL = "gpt-realtime-translate"
+TRANSLATION_MODEL = "gpt-realtime-translate"
+TRANSCRIPTION_MODEL = "gpt-realtime-whisper"
 
 
 def load_api_key() -> str:
@@ -33,8 +34,13 @@ def load_api_key() -> str:
 def create_client_secret(api_key: str, target_language: str) -> tuple[int, bytes]:
     payload = {
         "session": {
-            "model": MODEL,
+            "model": TRANSLATION_MODEL,
             "audio": {
+                "input": {
+                    "transcription": {
+                        "model": TRANSCRIPTION_MODEL,
+                    },
+                },
                 "output": {
                     "language": target_language,
                 },

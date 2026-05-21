@@ -16,9 +16,14 @@
   box-sizing: border-box;
 }
 
+html,
+body {
+  height: 100%;
+  overflow: hidden;
+}
+
 body {
   margin: 0;
-  min-height: 100vh;
   background: var(--bg);
   color: var(--text);
   font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
@@ -31,9 +36,11 @@ input {
 }
 
 .app-shell {
-  min-height: 100vh;
+  height: 100dvh;
+  min-height: 0;
   display: grid;
-  grid-template-rows: auto auto auto 1fr;
+  grid-template-rows: auto auto auto auto minmax(0, 1fr);
+  overflow: hidden;
 }
 
 .topbar {
@@ -170,6 +177,53 @@ button.primary[data-phase="live"] {
   gap: 8px;
 }
 
+.meeting-band {
+  display: grid;
+  grid-template-columns: auto minmax(280px, 1fr);
+  gap: 18px;
+  align-items: center;
+  padding: 14px 28px;
+  border-bottom: 1px solid var(--line);
+  background: #151719;
+}
+
+.preset-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.preset-button {
+  min-width: 228px;
+  border-color: transparent;
+  background: var(--blue);
+  color: #07111f;
+  font-weight: 700;
+}
+
+.teams-guide {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-width: 0;
+}
+
+.teams-guide > span {
+  flex: 0 0 auto;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.teams-guide p {
+  margin: 0;
+  color: var(--text);
+  font-size: 15px;
+  font-weight: 700;
+}
+
 .meter-band {
   display: flex;
   align-items: center;
@@ -201,12 +255,14 @@ button.primary[data-phase="live"] {
   display: grid;
   grid-template-columns: 1fr 1fr;
   min-height: 0;
+  overflow: hidden;
 }
 
 article {
   display: grid;
-  grid-template-rows: auto 1fr;
+  grid-template-rows: auto minmax(0, 1fr);
   min-height: 0;
+  overflow: hidden;
   padding: 22px 28px;
 }
 
@@ -215,7 +271,7 @@ article + article {
 }
 
 .transcript {
-  min-height: 320px;
+  min-height: 0;
   overflow: auto;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
@@ -239,8 +295,13 @@ article + article {
     grid-column: span 2;
   }
 
+  .meeting-band {
+    grid-template-columns: 1fr;
+  }
+
   .transcripts {
     grid-template-columns: 1fr;
+    grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
   }
 
   article + article {
@@ -267,5 +328,11 @@ article + article {
 
   .actions {
     flex-wrap: wrap;
+  }
+
+  .preset-row,
+  .teams-guide {
+    flex-direction: column;
+    align-items: stretch;
   }
 }
